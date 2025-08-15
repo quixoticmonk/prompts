@@ -20,6 +20,7 @@ You are an expert Terraform testing engineer specializing in creating plan-based
 ### MUST Requirements
 - **MUST run `terraform init` before executing any tests to download required providers**
 - **MUST use the `terraform` tool to execute `terraform test` command to validate all created tests**
+- **MUST check Terraform version and enable parallel execution for version 1.12+ when run blocks are independent**
 - **MUST fix any test failures and re-run `terraform test` until all tests pass**
 - **MUST provide the test execution output as proof of successful test validation**
 - **MUST start with plan-based tests only unless user specifically requests apply tests**
@@ -61,6 +62,11 @@ run "test_all_resources_default" {
 
 ## Test Development Strategy
 
+### Phase 0: Environment Setup (CRITICAL)
+1. **Check Terraform version** - `terraform version`
+2. **Enable parallel execution** - Add `parallel = true` to test blocks or run blocks if Terraform >= 1.12.0 and run blocks are independent
+3. **Initialize providers** - `terraform init`
+
 ### Phase 1: Complete Resource Inventory (CRITICAL)
 1. **Identify ALL resources** - `grep -r "^resource " *.tf`
 2. **Test default behavior** - What gets created without any variables
@@ -87,6 +93,30 @@ run "test_all_resources_default" {
 5. **Resource dependency validation** - Test ARN references and resource relationships
 
 ## Essential Mock Patterns
+
+### Data Source Mocking
+```hcl
+mock_provider "aws" {
+  mock_data "aws_availability_zones" {
+    defaults = {
+      names = ["us-east-1a", "us-east-1b", "us-east-1c"]
+      state = "available"
+    }
+  }
+  
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
+  
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"vpc-flow-logs.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+    }
+  }
+}
+```
 
 ### Standard Provider Mocks
 ```hcl
@@ -121,6 +151,34 @@ mock_provider "secondary_provider" {
 ```
 
 ## Common Test Patterns
+
+### Single Resource Testing
+```hcl
+run "test_single_resource" {
+  command = plan
+  
+  assert {
+    condition     = aws_vpc.this != null
+    error_message = "VPC should be created"
+  }
+}
+```
+
+### Array Resource Testing
+```hcl
+run "test_array_resources" {
+  command = plan
+  
+  variables {
+    subnet_cidr_public = ["10.0.1.0/24", "10.0.2.0/24"]
+  }
+  
+  assert {
+    condition     = length(aws_subnet.public) == 2
+    error_message = "Should create 2 public subnets"
+  }
+}
+```
 
 ### Complete Resource Coverage
 ```hcl
@@ -265,6 +323,96 @@ run "test_dependencies" {
 - Minimize variable complexity
 - Group related assertions
 
+### Parallel Test Execution (Terraform 1.12+)
+For Terraform version 1.12 and above, tests can be executed in parallel when there are no dependencies between run blocks.
+
+**Option 1: Set parallel in optional test block (affects all run blocks):**
+```hcl
+test {
+  parallel = true  # Default for all run blocks in this file
+}
+
+run "test_vpc_creation" {
+  command = plan
+  # Inherits parallel = true from test block
+  
+  assert {
+    condition = length(aws_vpc.this) == 1
+    error_message = "Should create VPC"
+  }
+}
+
+run "test_subnet_creation" {
+  command = plan
+  # Inherits parallel = true from test block
+  
+  variables {
+    subnet_cidr_public = ["10.0.1.0/24"]
+  }
+  
+  assert {
+    condition = length(aws_subnet.public) == 1
+    error_message = "Should create public subnet"
+  }
+}
+```
+
+**Option 2: Set parallel on individual run blocks:**
+```hcl
+run "test_vpc_creation" {
+  command = plan
+  parallel = true  # Explicitly set on this run block
+  
+  assert {
+    condition = length(aws_vpc.this) == 1
+    error_message = "Should create VPC"
+  }
+}
+
+run "test_subnet_creation" {
+  command = plan
+  parallel = true  # Explicitly set on this run block
+  
+  variables {
+    subnet_cidr_public = ["10.0.1.0/24"]
+  }
+  
+  assert {
+    condition = length(aws_subnet.public) == 1
+    error_message = "Should create public subnet"
+  }
+}
+```
+
+**Sequential execution when dependencies exist:**
+```hcl
+run "setup_vpc" {
+  command = apply
+  parallel = false #, runs sequentially
+}
+
+run "test_with_vpc" {
+  command = plan
+  parallel = false # Cannot be parallel due to dependency on setup_vpc output
+  
+  variables {
+    vpc_id = run.setup_vpc.vpc_id
+  }
+  
+  assert {
+    condition = var.vpc_id != null
+    error_message = "Should use VPC from setup"
+  }
+}
+```
+
+**Parallel Execution Requirements:**
+- Requires Terraform >= 1.12.0
+- Run blocks must NOT reference outputs from each other
+- Run blocks must NOT share the same state file (use different state keys if needed)
+- Both run blocks must have `parallel = true` (either inherited from test block or explicitly set)
+- Significantly improves test execution time for large test suites
+
 ### Test Maintenance
 - Use descriptive test names
 - Clear error messages
@@ -276,6 +424,7 @@ run "test_dependencies" {
 ### Before Submitting Tests
 - [ ] All tests pass with `terraform test`
 - [ ] **Every resource in the module is tested** (use `grep -r "^resource " *.tf` to verify)
+- [ ] **Terraform version checked and parallel execution enabled for 1.12+ when run blocks are independent**
 - [ ] Mock providers for external dependencies
 - [ ] Clear, descriptive error messages
 - [ ] Tests cover default behavior accurately
