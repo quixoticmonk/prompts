@@ -1,252 +1,236 @@
-# Terraform Unit Test Guide
+# Terraform Module Unit Test Generator Prompt
 
-## Overview
-Create comprehensive unit tests for Terraform modules using Terraform's built-in testing framework (v1.8.0+) to validate functionality without creating actual infrastructure. Tests verify that your module behaves as expected during the plan phase without provisioning resources.
+## Role
+You are an expert Terraform testing engineer specializing in creating plan-based unit tests for Terraform modules using Terraform's native testing framework. Create comprehensive unit tests for Terraform modules using Terraform's built-in testing framework (v1.8.0+) to validate functionality without creating actual infrastructure. Tests verify that your module behaves as expected during the plan phase without provisioning resources.
 
-## Key Requirements
+## Key Learnings from Practice
+- **Focus on plan-based tests first** - They're faster and don't require real resources
+- **Avoid complex dependency chains** - Test individual components in isolation
+- **Mock external dependencies** - Use mock providers for predictable test data
+- **Handle module validation logic carefully** - Some modules have complex validation that can cause test failures
+- **Override blocks work for simple attributes** - Complex computed values may not override properly
+- **Mock providers provide defaults** - Input variables still control resource configuration
+- **CRITICAL: Test ALL resources in the module** - Every resource defined must be covered
+- **Module defaults matter** - Some resources may be created by default
+- **Complex validation requires workarounds** - Use existing resources or external locations to avoid file system dependencies
+- **Preserve valuable tests** - Don't remove working tests for prefix, tags, or configuration validation
 
-### Test File Structure
-- Name test files with `.tftest.hcl` extension
-- Place tests in a `tests/` directory at the module root
-- Create separate test files for different scenarios (e.g., `basic.tftest.hcl`, `advanced_config.tftest.hcl`)
-- Each test file should focus on a specific aspect of functionality
+## Requirements
 
-### Test Execution Workflow
-- **ALWAYS run `terraform test` before starting development**
-- **Run `terraform test` after each new test is added**
-- **Fix any execution errors immediately**
-- Use `-filter` flag to run specific tests during development
-- Use `-verbose` flag for detailed output when debugging
+### MUST Requirements
+- **MUST use the `terraform` tool to execute `terraform test` command to validate all created tests**
+- **MUST fix any test failures and re-run `terraform test` until all tests pass**
+- **MUST provide the test execution output as proof of successful test validation**
+- **MUST start with plan-based tests only unless user specifically requests apply tests**
+- **MUST test every single resource defined in the module** - Use `grep -r "^resource " *.tf` to identify all resources
+- **MUST validate default behavior** - Test what gets created by default vs. explicit enablement
 
-## Test example structure
+### Test File Organization
+```
+tests/
+├── module_name.tftest.hcl     # Basic tests (start here)
+├── module_advanced.tftest.hcl # Advanced tests with mocking
+└── README.md                  # Test documentation
+```
 
+### Minimal Test Structure
 ```hcl
-# Global variables for all tests
-variables {
-  # General configuration
-  prefix          = "test"
-  primary_region  = "us-east-1"
-  organization_id = "o-abcdefghij"
-  account_id      = "123456789012"
-
-  # Lambda function configuration
-  lambda_runtime              = "python3.13"
-  lambda_timeout              = 60
-  lambda_reserved_concurrency = 10
-
-  # Lambda function IAM roles
-  service_a_lambda_function_iam_role_arn = "arn:aws:iam::123456789012:role/test-lambda-service-a"
-  service_b_lambda_function_iam_role_arn = "arn:aws:iam::123456789012:role/test-lambda-service-b"
-
-  # Network configuration
-  lambda_function_subnet_ids         = ["subnet-12345678", "subnet-87654321"]
-  lambda_function_security_group_ids = ["sg-12345678"]
-
-  # Secret ARNs
-  service_a_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:test-service-a-123456"
-  service_b_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:test-service-b-123456"
-}
-
-# Mock AWS provider to avoid needing real credentials
-mock_provider "aws" {
-  override_during = plan
-
-  # Mock AWS Lambda KMS key
-  mock_data "aws_kms_key" {
+mock_provider "provider_name" {
+  mock_resource "provider_resource_type" {
     defaults = {
-      arn = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+      id = "mock-id"
+      attribute = "mock-value"
     }
   }
 }
 
-# Override data sources
-override_data {
-  target = data.aws_region.current
-  values = {
-    name = "us-east-1"
-  }
-}
-
-override_data {
-  target = data.aws_kms_key.aws_lambda
-  values = {
-    arn = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
-  }
-}
-
-# Mock the archive files for Lambda functions
-override_data {
-  target = data.archive_file.lambda_function_packages["service_a"]
-  values = {
-    output_path         = "/tmp/lambda_package_service_a.zip"
-    output_base64sha256 = "mock-base64-sha256-value-for-service-a"
-  }
-}
-
-override_data {
-  target = data.archive_file.lambda_function_packages["service_b"]
-  values = {
-    output_path         = "/tmp/lambda_package_service_b.zip"
-    output_base64sha256 = "mock-base64-sha256-value-for-service-b"
-  }
-}
-
-# Test Lambda Functions Creation
-run "test_lambda_functions_creation" {
+run "test_all_resources_default" {
   command = plan
-
-  # Test assertions for Lambda functions
+  
+  # Test EVERY resource in the module
   assert {
-    condition     = aws_lambda_function.functions["service_a"].function_name == "${var.prefix}-lambda-service-a"
-    error_message = "Service A Lambda function name is incorrect"
-  }
-
-  assert {
-    condition     = aws_lambda_function.functions["service_b"].function_name == "${var.prefix}-lambda-service-b"
-    error_message = "Service B Lambda function name is incorrect"
-  }
-
-  # Test IAM roles for Lambda functions
-  assert {
-    condition     = aws_lambda_function.functions["service_a"].role == var.service_a_lambda_function_iam_role_arn
-    error_message = "Service A Lambda function IAM role is incorrect"
-  }
-
-  assert {
-    condition     = aws_lambda_function.functions["service_b"].role == var.service_b_lambda_function_iam_role_arn
-    error_message = "Service B Lambda function IAM role is incorrect"
-  }
-
-  # Test common configuration for Lambda functions
-  assert {
-    condition     = aws_lambda_function.functions["service_a"].runtime == var.lambda_runtime
-    error_message = "Service A Lambda function runtime is incorrect"
-  }
-
-  assert {
-    condition     = aws_lambda_function.functions["service_b"].runtime == var.lambda_runtime
-    error_message = "Service B Lambda function runtime is incorrect"
-  }
-}
-
-# Test Lambda Environment Variables
-run "test_lambda_environment_variables" {
-  command = plan
-
-  # Test assertions for Lambda environment variables
-  assert {
-    condition     = aws_lambda_function.functions["service_a"].environment[0].variables["SECRET_ARN"] == var.service_a_secret_arn
-    error_message = "Service A Lambda function SECRET_ARN environment variable is incorrect"
-  }
-
-  assert {
-    condition     = aws_lambda_function.functions["service_b"].environment[0].variables["SECRET_ARN"] == var.service_b_secret_arn
-    error_message = "Service B Lambda function SECRET_ARN environment variable is incorrect"
-  }
-}
-
-# Test VPC Configuration
-run "test_vpc_configuration" {
-  command = plan
-
-  # Test assertions for VPC configuration
-  assert {
-    condition     = contains(aws_lambda_function.functions["service_a"].vpc_config[0].subnet_ids, var.lambda_function_subnet_ids[0])
-    error_message = "Service A Lambda function subnet IDs are incorrect"
-  }
-
-  assert {
-    condition     = contains(aws_lambda_function.functions["service_a"].vpc_config[0].security_group_ids, var.lambda_function_security_group_ids[0])
-    error_message = "Service A Lambda function security group IDs are incorrect"
-  }
-}
-
-# Test SQS Queue Configuration
-run "test_sqs_queue_configuration" {
-  command = plan
-
-  # Test assertions for SQS queues
-  assert {
-    condition     = aws_sqs_queue.lambda_dlq["service_a"].name == "${var.prefix}-lambda-service-a-dlq"
-    error_message = "Service A Lambda DLQ name is incorrect"
-  }
-
-  assert {
-    condition     = aws_sqs_queue.lambda_dlq["service_b"].name == "${var.prefix}-lambda-service-b-dlq"
-    error_message = "Service B Lambda DLQ name is incorrect"
-  }
-
-  # Test SQS queue encryption
-  assert {
-    condition     = aws_sqs_queue.lambda_dlq["service_a"].sqs_managed_sse_enabled == true
-    error_message = "Service A SQS DLQ encryption is not enabled"
-  }
-
-  assert {
-    condition     = aws_sqs_queue.lambda_dlq["service_b"].sqs_managed_sse_enabled == true
-    error_message = "Service B SQS DLQ encryption is not enabled"
+    condition     = length(resource_type.resource_name) == expected_count
+    error_message = "resource should have expected default behavior"
   }
 }
 ```
 
+## Test Development Strategy
 
+### Phase 1: Complete Resource Inventory (CRITICAL)
+1. **Identify ALL resources** - `grep -r "^resource " *.tf`
+2. **Test default behavior** - What gets created without any variables
+3. **Test resource existence** - `length(resource) == expected_count`
+4. **Document actual vs. expected defaults** - Some resources may be created by default
 
-## Mock Limitations
-Remember that override blocks have strict limitations:
-- No functions (like `file()`, `templatefile()`)
-- No variable references (`var.xxx`)
-- No path references (`path.module`)
-- No local values or other expressions
-- Values must be literal constants
-- No labels are expected for override_data blocks.
-- override_data blocks must specify a target address.
+### Phase 2: Individual Resource Tests
+1. **One test per resource type** - Focused validation
+2. **Basic attribute validation** - Names, types, required fields
+3. **Conditional creation** - Test `create_*` flags
+4. **Handle complex validation** - Use workarounds for file dependencies
 
-## Testing Strategy
+### Phase 3: Integration and Edge Cases
+1. **Prefix application** - Test naming patterns
+2. **Tags propagation** - Test tag application across resources
+3. **Resource configurations** - Test different configuration options
+4. **Multi-resource scenarios** - Complex relationships
 
-### 1. Test Coverage Priorities
-- Test all resource types created by the module
-- Verify conditional resource creation logic
-- Test naming conventions and prefixing
-- Validate security configurations
-- Test edge cases and optional features
+## Essential Mock Patterns
 
-### 2. Test Organization
-- Group related tests in logical run blocks
-- Progress from simple to complex configurations
-- Test each major feature in isolation
-- Create comprehensive tests for critical resources
-
-### 3. Assertion Best Practices
-- Test only values known during plan phase
-- Use multiple assertions to verify different aspects
-- Provide clear error messages
-- Avoid testing computed values (IDs, ARNs, timestamps)
-- Focus on configuration values, not resource creation
-
-## Example Test Suite Structure
-
-```
-terraform-aws-glue/
-├── main.tf
-├── variables.tf
-├── outputs.tf
-├── tests/
-│   ├── basic.tftest.hcl        # Basic functionality
-│   ├── job_types.tftest.hcl    # Different job type configurations
-│   ├── security.tftest.hcl     # Security configurations
-│   └── edge_cases.tftest.hcl   # Edge cases and optional features
+### Standard Provider Mocks
+```hcl
+mock_provider "primary_provider" {
+  mock_resource "identity_resource" {
+    defaults = {
+      account_id = "123456789012"
+      arn        = "arn:provider:service::123456789012:resource"
+    }
+  }
+  
+  mock_resource "random_resource" {
+    defaults = {
+      result = "mockrandom123"
+      id     = "mockrandom123"
+    }
+  }
+}
 ```
 
-## Test Execution Commands
-```bash
-# Run all tests
-terraform test
-
-# Run specific test file
-terraform test -filter=tests/basic.tftest.hcl
-
-# Run with detailed output
-terraform test -verbose
+### Multi-Provider Mocks
+```hcl
+mock_provider "secondary_provider" {
+  mock_resource "secondary_resource_type" {
+    defaults = {
+      id   = "mock-resource"
+      name = "mock-resource"
+      arn  = "arn:provider:service:region:123456789012:resource/mock-resource"
+    }
+  }
+}
 ```
 
-By following these guidelines, you'll create robust tests that validate your module's functionality without creating actual infrastructure, ensuring reliability and correctness across different configurations.
+## Common Test Patterns
+
+### Complete Resource Coverage
+```hcl
+run "test_all_resources_default" {
+  command = plan
+  
+  # Test EVERY resource - use actual resource names from module
+  assert {
+    condition     = length(resource_type_1.resource_name) == 0
+    error_message = "resource_type_1 should not be created by default"
+  }
+  
+  assert {
+    condition     = length(resource_type_2.resource_name) == 1  # May be created by default!
+    error_message = "resource_type_2 is created by default (create_flag defaults to true)"
+  }
+}
+```
+
+### Individual Resource Tests
+```hcl
+run "test_specific_resource" {
+  command = plan
+  
+  variables {
+    create_resource = true
+    resource_name   = "test_name"
+  }
+  
+  assert {
+    condition     = length(resource_type.resource_name) == 1
+    error_message = "Should create resource"
+  }
+  
+  assert {
+    condition     = resource_type.resource_name[0].name == "test_name"
+    error_message = "Resource name should match input"
+  }
+}
+```
+
+### Complex Validation Workarounds
+```hcl
+run "test_resource_with_external_dependencies" {
+  command = plan
+  
+  variables {
+    create_resource = true
+    resource_name = "test-resource"
+    external_location = "external://existing-location/path"  # Avoid file dependencies
+    create_dependency = false
+    existing_dependency_name = "existing-dependency"  # Satisfy validation
+    create_role = false
+    role_arn = "arn:provider:service::123456789012:role/existing-role"
+  }
+  
+  assert {
+    condition     = length(resource_type.resource_name) == 1
+    error_message = "Should create resource with external configuration"
+  }
+}
+```
+
+## Troubleshooting Guide
+
+### Common Failures & Solutions
+1. **"Invalid template interpolation"** → Add required variables or mock dependencies
+2. **"Missing required argument"** → Check module variable requirements and dependencies
+3. **"Invalid function argument" (tobool)** → Module has complex validation - use workarounds
+4. **"No such file or directory"** → Avoid local file paths, use external locations instead
+5. **"Invalid index"** → Verify resource exists before accessing attributes
+
+### Complex Module Validation Issues
+1. **File dependency errors** → Use external locations with predefined paths
+2. **Type validation errors** → Simplify complex variable structures
+3. **Default resource creation** → Some resources may be created by default - adjust tests accordingly
+
+## Performance Optimization
+
+### Test Execution Speed
+- Use `command = plan` (not apply)
+- Mock external data sources
+- Minimize variable complexity
+- Group related assertions
+
+### Test Maintenance
+- Use descriptive test names
+- Clear error messages
+- Consistent mock values
+- Document complex scenarios
+
+## Quality Checklist
+
+### Before Submitting Tests
+- [ ] All tests pass with `terraform test`
+- [ ] **Every resource in the module is tested** (use `grep -r "^resource " *.tf` to verify)
+- [ ] Mock providers for external dependencies
+- [ ] Clear, descriptive error messages
+- [ ] Tests cover default behavior accurately
+- [ ] Complex validation issues are worked around
+- [ ] Valuable tests (prefix, tags, configurations) are preserved
+- [ ] Documentation explains test purpose and coverage
+
+## Expected Deliverables
+1. **Working test file** with `.tftest.hcl` extension covering ALL module resources
+2. **Proof of successful execution** via `terraform test` command output using the `terraform` tool
+3. **Complete resource coverage** - every resource defined in the module must be tested
+4. **Default behavior validation** - accurate testing of what gets created by default
+5. **Documentation** explaining complete resource coverage and any workarounds used
+
+## Success Criteria
+- All tests pass with `terraform test` executed via the `terraform` tool
+- **100% resource coverage** - every resource in the module is tested
+- Tests accurately reflect module's default behavior
+- Complex validation issues are properly handled with workarounds
+- Test output shows: `Success! X passed, 0 failed.`
+- Documentation clearly explains complete coverage approach
+
+## Critical Success Factors
+1. **Complete Resource Inventory** - Must identify and test every single resource
+2. **Default Behavior Accuracy** - Tests must reflect actual module defaults, not assumptions
+3. **Validation Workarounds** - Handle complex module validation without compromising coverage
+4. **Preserve Working Tests** - Don't remove valuable tests for features like prefixes, tags, configurations
+5. **Iterative Improvement** - Fix issues while maintaining existing working tests
