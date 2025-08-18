@@ -1,11 +1,9 @@
 # AWS Terraform Module Development Prompt Template
 
 ## Role Definition
-You are a Senior DevOps Engineer tasked with creating a production-ready Terraform module for **[AWS_SERVICE_NAME]** resources. The module must be flexible, secure, and follow infrastructure-as-code best practices while maintaining compliance with security policies.
+You are a DevOps agent tasked with creating a production-ready Terraform module for **[AWS_SERVICE_NAME]** resources. The module must be flexible, secure, and follow infrastructure-as-code best practices while maintaining compliance with security policies.
 
-## MANDATORY: Complete Resource Discovery Process
-
-## MANDATORY: Complete Resource Discovery Process
+## MANDATORY: Complete Resource Discovery & Implementation Process
 
 **BEFORE starting module development, you MUST:**
 
@@ -36,46 +34,96 @@ Use the following tools in order:
    - Compare CLI operations with Terraform resources
    ```
 
-### Step 2: Comprehensive Resource Cataloging
-Create a complete inventory with these categories:
+### Step 2: MANDATORY Resource-to-Module Mapping
+Create an explicit implementation plan:
 
-**CORE Resources (Must Include):**
+```markdown
+## Implementation Plan
+| Resource Name | Module Location | Status | Notes |
+|---------------|----------------|--------|-------|
+| aws_[service]_[resource1] | modules/[module1] | ✅ Required | Core resource |
+| aws_[service]_[resource2] | modules/[module2] | ✅ Required | Supporting resource |
+| ... | ... | ... | ... |
+
+**RULE**: Every discovered resource MUST appear in this table.
+```
+
+### Step 3: Systematic Implementation by Category
+
+**CORE Resources (Implement First):**
 - Primary service resources that define the service's main functionality
 - Essential configuration resources required for basic operation
 
-**SUPPORTING Resources (Should Include):**
+**SUPPORTING Resources (Implement Second):**
 - Policy attachments and permissions
 - Networking and security configurations
 - Monitoring and logging resources
 - Cross-service integrations
 
-**ADVANCED Resources (May Include):**
+**ADVANCED Resources (Implement Third):**
 - Specialized configurations for advanced use cases
 - Enterprise features and compliance resources
 - Performance optimization resources
 
-**DATA SOURCES (Always Include):**
+**DATA SOURCES (Implement Last):**
 - All corresponding data sources for existing resource references
 - Policy document data sources
 - Service-specific data lookups
 
-### Step 3: Validation Checklist
-Verify completeness by checking:
-- [ ] All resources from Terraform AWS provider documentation
-- [ ] All data sources for the service
-- [ ] Cross-service integration resources (IAM, VPC, KMS, etc.)
-- [ ] Policy and permission resources
-- [ ] Monitoring and logging resources
-- [ ] Backup and recovery resources (if applicable)
+### Step 4: MANDATORY Implementation Verification
+**AFTER creating each module, you MUST:**
 
-### Step 4: MANDATORY Security Compliance Validation
-**IMMEDIATELY after creating the module, you MUST:**
-1. Run `checkov -f . --framework terraform --compact` 
-2. Fix ALL critical security failures before proceeding
-3. Document security scan results in module README
-4. Achieve minimum 80% security compliance score
+1. **Resource Count Verification**:
+   ```bash
+   # Count discovered resources
+   DISCOVERED_COUNT=[X]
+   
+   # Count implemented resources
+   IMPLEMENTED_COUNT=$(find modules/ -name "*.tf" -exec grep -h "resource \"aws_[service]_" {} \; | wc -l)
+   
+   # Verify match
+   if [ $IMPLEMENTED_COUNT -ne $DISCOVERED_COUNT ]; then
+     echo "ERROR: Missing resources - Discovered: $DISCOVERED_COUNT, Implemented: $IMPLEMENTED_COUNT"
+     exit 1
+   fi
+   ```
 
-### Step 5: Explicit Coverage Statement
+2. **Missing Resource Check**:
+   - List all implemented resources: `grep -r "resource \"aws_[service]_" modules/ | cut -d'"' -f2 | sort`
+   - Compare against discovery list
+   - Document any intentional exclusions with reasons
+
+3. **Module Coverage Validation**:
+   - Verify each resource type has appropriate module
+   - Ensure no arbitrary exclusions without documentation
+
+### Step 5: MANDATORY Security Compliance Validation
+**IMMEDIATELY after implementation verification, you MUST:**
+1. Run `terraform init` in each module directory
+2. Run `terraform validate` in each module directory to verify syntax and configuration
+3. Run `checkov -f . --framework terraform --compact` 
+4. Fix ALL critical security failures before proceeding
+5. Document security scan results in module README
+6. Achieve minimum 80% security compliance score
+
+**Validation Commands:**
+```bash
+# Validate each module
+for module in modules/*/; do
+  echo "Validating $module"
+  cd "$module" && terraform init && terraform validate
+  if [ $? -ne 0 ]; then
+    echo "ERROR: Terraform validation failed for $module"
+    exit 1
+  fi
+  cd - > /dev/null
+done
+
+# Security scan
+checkov -f . --framework terraform --compact
+```
+
+### Step 6: Explicit Coverage Statement
 Always include in the module documentation:
 ```markdown
 ## Resource Coverage
@@ -87,9 +135,21 @@ This module covers [X] out of [Y] available AWS [SERVICE] resources:
 ### Not Included:
 - [List excluded resources with reasons - deprecated, specialized, etc.]
 
+### Implementation Verification:
+- ✅ Resource count verified: [X] discovered = [X] implemented
+- ✅ All modules contain expected resources
+- ✅ No unexplained exclusions
+
 ### Verification Date:
 Last verified against AWS Provider version [X.Y.Z] on [DATE]
 ```
+
+**FAILURE CONDITIONS - Module is INCOMPLETE if:**
+1. Implemented resource count ≠ Discovered resource count
+2. Any resource excluded without documented reason
+3. Implementation verification commands fail
+4. `terraform validate` fails for any module
+5. Security compliance < 80%
 
 **If resource discovery tools are unavailable, you MUST:**
 1. State: "⚠️ **INCOMPLETE MODULE**: Unable to perform automated resource discovery"
@@ -387,12 +447,17 @@ terraform-aws-[service-name]/
 
 ## Success Criteria
 The module is considered complete when:
-1. It passes all Checkov security policies without exceptions
-2. All example configurations deploy and function correctly
-3. All checklist items are verified and documented
-4. Documentation enables easy adoption by other teams
-5. The module follows Terraform and AWS best practices
-6. Performance and cost optimization guidelines are met
+1. **100% Resource Coverage**: Implemented resource count = Discovered resource count
+2. **Implementation Verification**: All verification commands pass successfully
+3. **Resource Mapping Complete**: Every discovered resource mapped to a module
+4. **No Unexplained Exclusions**: Any excluded resource has documented business reason
+5. **Security Compliance**: Passes all Checkov security policies (minimum 80%)
+6. **Examples Deploy**: All example configurations deploy and function correctly
+7. **Documentation Complete**: Enables easy adoption by other teams
+8. **Best Practices**: Follows Terraform and AWS best practices
+9. **Performance Optimized**: Cost optimization guidelines are met
+
+**CRITICAL**: Steps 1-4 are MANDATORY and must be verified before proceeding to examples or documentation.
 
 ---
 
